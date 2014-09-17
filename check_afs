@@ -1,0 +1,123 @@
+#!/usr/bin/perl
+
+# Simple nagios plugin to check AFS services
+# Developed for CMU Computer Club
+# Copyright 2014 by Michael Stroucken
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+use strict;
+
+use Socket;
+use Getopt::Std;
+use Switch;
+
+my $versionrx = "\0\0\3\347\0\0\0\0\0\0\0e\0\0\0\0\0\0\0\0\r\5\0\0\0\0\0\0\0";
+
+our($opt_h, $opt_H, $opt_s);
+getopts("hH:s:");
+
+if (defined($opt_h)) {
+  print << "END";
+Nagios plugin for AFS
+Copyright 2014 by Michael Stroucken
+Licensed under the GPL
+
+Usage: $0 -H <host> -s <service>\n
+Where <service> is one of:-
+  fileserver - AFS fileserver process
+  cm - AFS cache manager (on client)
+  ptserver - AFS protection server
+  vlserver - AFS VLDB server
+  kaserver - AFS Kerberos server
+  volserver - AFS Volume server
+  bosserver - AFS Basic Overseer
+  upserver - AFS Update server
+  rmtsysd - AFS to NFS translator
+  buserver - AFS Backup server
+END
+  exit(0);
+}
+
+# sanitize the parameters!
+
+my $host = $opt_H;
+my $port;
+$opt_s = lc($opt_s);
+switch($opt_s) {
+  case "fileserver" {$port = 7000;}# file server
+  case "cm" {$port = 7001;}        # cache manager (client)
+  case "ptserver" {$port = 7002;}  # protection server
+  case "vlserver" {$port = 7003;}  # volume location server
+  case "kaserver" {$port = 7004;}  # kerberos authentication server
+  case "volserver" {$port = 7005;} # volume server
+  case "bosserver" {$port = 7007;} # basic overseer
+  case "upserver" {$port = 7008;}  # update server
+  case "rmtsysd" {$port = 7009;}   # NFS-AFS translator
+  case "buserver" {$port = 7021;}  # backup server
+  else {die("Unknown service $opt_s\n");}
+}
+
+socket(SOCKET, PF_INET, SOCK_DGRAM, (getprotobyname('udp'))[2]);
+bind(SOCKET, pack_sockaddr_in(0, inet_aton("0.0.0.0")))
+   or die "Can't bind\n";
+
+my $ipaddr   = inet_aton($host) or die "Can't resolve\n";
+my $portaddr = sockaddr_in($port, $ipaddr);
+
+send(SOCKET, $versionrx, 0, $portaddr) == length($versionrx) or die "Can't send\n";
+my $bits;
+vec($bits, fileno(SOCKET), 1) = 1;
+my $return = select($bits, undef, undef, 1);
+if (!$return) {
+  print "CRITICAL - no reply\n";
+  exit(2);
+}
+
+my $reply;
+recv(SOCKET, $reply, 1500, 0) or die "Can't recv\n";
+close(SOCKET);
+
+#print "Reply: $reply\n";
+# "OpenAFS 1.4.2 built  2009-07-18"
+if ($reply !~ /OpenAFS (\S+) built  (\d{4}-\d{2}-\d{2})/) {
+  print "CRITICAL - unexpected reply\n";
+  exit(2);
+}
+
+my $version = $1;
+my $date = $2;
+
+my $outdated = 0;
+$date =~ /(\d{4})-(\d{2})-(\d{2})/;
+my ($year, $month, $day) = ($1, $2, $3);
+if ($year < 2014) {
+  $outdated = 1;
+} else {
+  if ($month < 6) {
+    $outdated = 1;
+  } else {
+    if ($day <= 12) {
+      $outdated = 1;
+    }
+  }
+}
+
+if ($outdated != 0) {
+  print "WARNING - Security issues reported after build date: $date\n";
+  exit(1);
+}
+
+print "OK - version: $version date: $date\n";
+exit(0);

@@ -76,10 +76,16 @@ bind(SOCKET, pack_sockaddr_in(0, inet_aton("0.0.0.0")))
 my $ipaddr   = inet_aton($host) or die "Can't resolve\n";
 my $portaddr = sockaddr_in($port, $ipaddr);
 
-send(SOCKET, $versionrx, 0, $portaddr) == length($versionrx) or die "Can't send\n";
-my $bits;
-vec($bits, fileno(SOCKET), 1) = 1;
-my $return = select($bits, undef, undef, 1);
+my $return;
+my $tries = 3;
+do {
+  $tries--;
+  send(SOCKET, $versionrx, 0, $portaddr) == length($versionrx) or die "Can't send\n";
+  my $bits;
+  vec($bits, fileno(SOCKET), 1) = 1;
+  $return = select($bits, undef, undef, 1);
+} while ($tries > 0 && !$return);
+
 if (!$return) {
   print "CRITICAL - no reply\n";
   exit(2);
